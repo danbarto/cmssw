@@ -97,9 +97,30 @@ metMCTable = cms.EDProducer("SimpleCandidateFlatTableProducer",
     ),
 )
 
+#PFCandTable = cms.EDProducer("SimpleCandidateFlatTableProducer",
+#    src = cms.InputTag("packedPFCandidates"),
+#    cut = cms.string(""),
+#    name = cms.string("PFCand"),
+#    doc = cms.string("Minimal collection of PF candidates"),
+#    singleton = cms.bool(False),
+#    extension = cms.bool(False),
+#    variables = cms.PSet(
+#        pt  = Var("pt", float, precision=10),
+#        phi = Var("phi", float, precision=6)
+#        eta = Var("eta", float, precision=6)
+#    ),
+#)
 
+metSigTable = cms.EDProducer("METSignificanceInputProducer",
+    srcPFCandidates = cms.InputTag('packedPFCandidates'),
+    srcLeptons      = cms.VInputTag('slimmedElectrons','slimmedMuons','slimmedPhotons'), # photons added here because of good resolution
+    srcPfJets       = cms.InputTag('slimmedJets'),
+    METSigParams    = cms.VPSet(
+        cms.PSet( name = cms.string("dRMatch"), dRMatch = cms.double(0.4) ),
+        ),
+)
 
 metSequence = cms.Sequence(chsForTkMet+tkMet)
-metTables = cms.Sequence( metTable + rawMetTable + caloMetTable + puppiMetTable + tkMetTable)
+metTables = cms.Sequence( metTable + rawMetTable + caloMetTable + puppiMetTable + tkMetTable + metSigTable )
 metMC = cms.Sequence( metMCTable )
 
