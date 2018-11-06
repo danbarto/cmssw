@@ -31,10 +31,6 @@
 
 #include "PhysicsTools/NanoAOD/interface/MatchingUtils.h"
 #include "DataFormats/NanoAOD/interface/FlatTable.h"
-//#include "DataFormats/NanoAOD/interface/MergeableCounterTable.h"
-//#include "FWCore/ParameterSet/interface/ConfigurationDescriptions.h"
-//#include "FWCore/ParameterSet/interface/ParameterSetDescription.h"
-//#include "FWCore/MessageLogger/interface/MessageLogger.h"
 #include "boost/algorithm/string.hpp"
 
 
@@ -56,6 +52,7 @@ class METSignificanceInputProducer : public edm::global::EDProducer<> {
         std::vector<edm::ParameterSet> srcParameters = iConfig.getParameter< std::vector<edm::ParameterSet> >("METSigParams");
         for(std::vector<edm::ParameterSet>::const_iterator it=srcParameters.begin();it!=srcParameters.end();it++) {
             dRmatch = (*it).getParameter<double>("dRMatch");
+            jetThreshold = (*it).getParameter<double>("jetThreshold");
         }
 
         dR2match_ = dRmatch*dRmatch;
@@ -77,6 +74,7 @@ class METSignificanceInputProducer : public edm::global::EDProducer<> {
         desc.add<std::vector<edm::InputTag>>("srcLeptons")->setComment("input lepton collections for cleaning");  
         edm::ParameterSetDescription params;
         params.add<double>("dRMatch");
+        params.add<double>("jetThreshold");
         params.add<std::string>("name");
         desc.addVPSet("METSigParams", params, std::vector<edm::ParameterSet>())->setComment("Parameters");
         //desc.addPSet("METSigParams")->setComment("input parameters");
@@ -96,7 +94,7 @@ class METSignificanceInputProducer : public edm::global::EDProducer<> {
     edm::EDGetTokenT<edm::View<reco::Candidate> > pfCandidatesToken_;
     std::vector<edm::EDGetTokenT<edm::View<reco::Candidate> > > lepTokens_;
     std::vector<edm::EDGetTokenT<edm::View<edm::ParameterSet> > > paramTokens_;
-    double dR2match_, dRmatch;
+    double dR2match_, dRmatch, jetThreshold;
 
 };
 
@@ -131,13 +129,16 @@ METSignificanceInputProducer::produce(edm::StreamID streamID, edm::Event& iEvent
 
     double resolution, sumPt, sumPtUp, pt, eta, energy;
     const edm::View<reco::Candidate>* pfCandidates=pfCandidatesH.product();
-    
+
     // for lepton and jet subtraction
     std::unordered_set<reco::CandidatePtr,ptr_hash> footprint;
 
     // create footprints for leptons with pt>10
+    // PF candidates for leptons with pt<10 should be part of sumPt
     for ( const auto& lep_i : leptons ) {
+        int nLep = 0;
         for( const auto& lep : *lep_i ) {
+            nLep++;
             if( lep.pt() > 10 ){
                 for( unsigned int n=0; n < lep.numberOfSourceCandidatePtrs(); n++ ){
                     if( lep.sourceCandidatePtr(n).isNonnull() and lep.sourceCandidatePtr(n).isAvailable() ){
@@ -148,10 +149,22 @@ METSignificanceInputProducer::produce(edm::StreamID streamID, edm::Event& iEvent
         }
     }
 
+    // reset sumPt
+    sumPt = 0;
+    sumPtUp = 0;
+
     // add footprints of jets
+    // and at the same time add jets below threshold to sumPt
     for(const auto& jet : *jets) {
         // disambiguate jets and leptons
+        // clean all leptons from jets
         if(!cleanJet(jet, leptons) ) continue;
+        // low pt jets are added to sumPt
+        if(jet.pt() < jetThreshold){
+            sumPt += jet.pt();
+            //what to do with sumPtUp??
+        }
+        // all clean jets are added to footprints so that the associated candidates are not part of sumPt
         for( unsigned int n=0; n < jet.numberOfSourceCandidatePtrs(); n++){
             if( jet.sourceCandidatePtr(n).isNonnull() and jet.sourceCandidatePtr(n).isAvailable() ){
                 footprint.insert(jet.sourceCandidatePtr(n));
@@ -159,9 +172,7 @@ METSignificanceInputProducer::produce(edm::StreamID streamID, edm::Event& iEvent
         }
     }
 
-    // calculate sumPt
-    sumPt = 0;
-    sumPtUp = 0;
+    // add PF candidate momenta to sumPt
     for(size_t i = 0; i< pfCandidates->size();  ++i) {
         // check if candidate exists in a lepton or jet
         bool cleancand = true;
@@ -204,9 +215,6 @@ METSignificanceInputProducer::produce(edm::StreamID streamID, edm::Event& iEvent
         }
     }
 
-    //std::cout << "sumPt: " << sumPt << std::endl;
-    //std::cout << "sumPtUp: " << sumPtUp << " " << sumPtUp/sumPt << std::endl;
-
     auto out = std::make_unique<nanoaod::FlatTable>(1, "MET", true, true);
     out->setDoc("Inputs for MET Significance");
     out->addColumnValue<float>("sumPt", sumPt, "sumPt for MET Significance", nanoaod::FlatTable::FloatColumn);
@@ -240,8 +248,10 @@ bool
 METSignificanceInputProducer::cleanJet(const pat::Jet& jet, const std::vector< edm::Handle<reco::CandidateView> >& leptons ) const {
     for ( const auto& lep_i : leptons ) {
         for( const auto& lep : *lep_i ) {
-            if ( reco::deltaR2(lep, jet) < dR2match_ ) {
-                return false;
+            if (lep.pt() > 0){
+                if ( reco::deltaR2(lep, jet) < dR2match_ ) {
+                    return false;
+                }
             }
         }
     }
